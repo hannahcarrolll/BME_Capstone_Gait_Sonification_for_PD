@@ -1,4 +1,4 @@
-# BME_Capstone_Gait_Sonification_for_PD
+# BME Capstone Gait Sonification for PD
 
 ## Project Background
 
