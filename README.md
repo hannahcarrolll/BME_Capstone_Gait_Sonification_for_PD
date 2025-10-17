@@ -1,7 +1,11 @@
 # Gait Sonification Shoe Insole Training Device for PD
 ## BME Capstone Project
 ## Fall 2025
-### Hannah Carroll, Sabrina Goslin, Thomas Lynch, Kyle Yost, Caitlyn Robinson
+### Hannah Carroll - Project Manager; Python Focus, Device Construction (Insole)
+### Sabrina Goslin - Documentation Lead; PCB Design & Printing, Device Construction
+### Thomas Lynch - Electrical Lead; Circuit Design & Modeling, Python
+### Kyle Yost - CAD Lead; Device Modeling & Parts Construction (Electrical Housing), PCB Design & Printing
+### Caitlyn Robinson - Python Lead; File Organization & Maitence, Research & Design, FDA Regulations
 
 ## Project Background
 ### Motivation
