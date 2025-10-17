@@ -21,7 +21,7 @@
 - **Live Serial Input**: Accepts JSON-formatted FSR data via PySerial from microcontroller
 - **Baseline Measurements**:
   - Collects and calculates average force for all sensors over a period of 10s to determine baseline for patients of different weights
-  - Calculates average steps per minute after a period of 30 seconds patient walking (calculated from time between heelstrikes (sensor 0 \geq baseline))
+  - Calculates average steps per minute after a period of 30 seconds patient walking (calculated from time between heelstrikes (sensor 0 $\geq$ baseline))
 - **Training Mode**:
   - Plays metronome based on patient average step per minute for x seconds (customizable for patients with different onsets)
   - Metronome turns dims to 0 sound
