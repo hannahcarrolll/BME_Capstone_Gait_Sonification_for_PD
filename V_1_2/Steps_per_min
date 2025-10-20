@@ -1,0 +1,28 @@
+import numpy as np
+
+def calculate_spm(cop_data, threshold):
+    """
+    Calculate average Steps Per Minute based on heel sensor (sensor 0).
+    """
+    timestamps = []
+    heel_forces = []
+
+    for t, forces, _, _ in cop_data:
+        timestamps.append(t)
+        heel_forces.append(forces[0])
+
+    timestamps = np.array(timestamps)
+    heel_forces = np.array(heel_forces)
+
+    heel_strikes = []
+    for i in range(1, len(heel_forces)):
+        if heel_forces[i-1] < threshold and heel_forces[i] >= threshold:
+            heel_strikes.append(timestamps[i])
+
+    if len(heel_strikes) < 2:
+        return 0.0
+
+    intervals = np.diff(heel_strikes)
+    mean_interval = np.mean(intervals)
+    spm = 60.0 / mean_interval
+    return spm
