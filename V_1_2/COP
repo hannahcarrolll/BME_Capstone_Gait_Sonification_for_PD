@@ -1,0 +1,36 @@
+def read_force_sensors(reader, duration=30, zero_threshold=45):
+    """
+    Optional: log per-sensor forces and COP for analysis.
+    """
+    import time
+    import numpy as np
+
+    sensor_coords = np.array([
+        [0.5, 0.0],  # Heel
+        [0.2, 0.8],  # Toe left
+        [0.5, 0.8],  # Toe center
+        [0.8, 0.8]   # Toe right
+    ])
+    start = time.time()
+    data_log = []
+
+    while time.time() - start < duration:
+        forces = reader.get_data()
+        if forces is None or len(forces) != 4:
+            continue
+
+        forces = np.array(forces)
+        forces[forces < zero_threshold] = 0
+        total_force = np.sum(forces)
+        if total_force > 0:
+            cop_x = np.sum(forces * sensor_coords[:,0]) / total_force
+            cop_y = np.sum(forces * sensor_coords[:,1]) / total_force
+        else:
+            cop_x, cop_y = np.nan, np.nan
+
+        timestamp = time.time() - start
+        data_log.append((timestamp, forces, cop_x, cop_y))
+        print(f"{timestamp:6.2f}s | COP=({cop_x:.3f},{cop_y:.3f}) | Forces={forces}")
+        time.sleep(0.05)
+
+    return data_log
