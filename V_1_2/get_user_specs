@@ -1,0 +1,30 @@
+import time
+import numpy as np
+
+def collect_baseline(reader, duration=10):
+    """Patient stands still; return static per-sensor thresholds."""
+    collected = []
+    start = time.time()
+    while time.time() - start < duration:
+        data = reader.get_data()
+        if data is not None:
+            collected.append(data)
+        time.sleep(0.05)
+    baseline = np.mean(collected, axis=0)
+    thresholds = baseline * 0.85
+    print(f"Static baseline thresholds: {thresholds}")
+    return thresholds
+
+def calibrate_walking(reader, duration=30):
+    """Patient walks; return per-sensor walking thresholds."""
+    collected = []
+    start = time.time()
+    while time.time() - start < duration:
+        data = reader.get_data()
+        if data is not None:
+            collected.append(data)
+        time.sleep(0.02)
+    collected = np.array(collected)
+    walking_thresholds = np.max(collected, axis=0) * 0.8
+    print(f"Walking thresholds: {walking_thresholds}")
+    return walking_thresholds
