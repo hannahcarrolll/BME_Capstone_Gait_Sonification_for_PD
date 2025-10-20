@@ -1,0 +1,28 @@
+import time
+import numpy as np
+import sounddevice as sd
+
+def run_training(reader, thresholds, duration=300, expected_interval=0.5):
+    fs = 44100
+    sensor_freqs = [440, 523, 659, 784]  # Hz for sensors 0-3
+    tones = [0.5 * np.sin(2*np.pi*f*np.linspace(0, 0.1, int(fs*0.1), endpoint=False)) for f in sensor_freqs]
+
+    print("Training session started.")
+    start_time = time.time()
+    last_strike_times = np.zeros(4)
+
+    while time.time() - start_time < duration:
+        forces = reader.get_data()
+        if forces is None or len(forces) != 4:
+            continue
+
+        now = time.time()
+        forces = np.array(forces)
+
+        for i in range(4):
+            if forces[i] < thresholds[i] and (now - last_strike_times[i]) > expected_interval:
+                sd.play(tones[i], fs)
+                last_strike_times[i] = now
+                print(f"Sensor {i} triggered | Force={forces[i]:.1f} | Threshold={thresholds[i]:.1f}")
+
+        time.sleep(0.01)
