@@ -1,0 +1,24 @@
+from arduino_reader import ArduinoReader
+from Get_User_Specs import collect_baseline, calibrate_walking
+from trining import run_training
+
+PORT = '/dev/cu.BTM1'
+BAUD = 9600
+DURATION = 300
+EXPECTED_INTERVAL = 0.5
+
+reader = ArduinoReader(PORT, BAUD)
+
+try:
+    # Phase 1: Stand still for baseline
+    static_thresholds = collect_baseline(reader, duration=10)
+    
+    # Phase 2: Walk for 20–30s to calibrate thresholds
+    walking_thresholds = calibrate_walking(reader, duration=30)
+    
+    # Use walking_thresholds for live monitoring
+    run_training(reader, walking_thresholds, duration=DURATION, expected_interval=EXPECTED_INTERVAL)
+
+finally:
+    reader.stop()
+    print("Arduino safely disconnected.")
