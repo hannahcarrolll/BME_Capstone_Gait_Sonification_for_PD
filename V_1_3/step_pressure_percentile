@@ -1,0 +1,47 @@
+import time
+import numpy as np
+from arduino_reader import ArduinoReader
+
+PERCENTILE = 90
+
+#%%
+
+def record_fsr_data(port='/dev/tty.BTM1', baud=9600, duration=60):
+    """
+    Record FSR readings for a fixed duration (≈ 5 steps walking).
+    Returns an Nx4 numpy array of sensor readings.
+    """
+    reader = ArduinoReader(port=port, baud=baud)
+    start_time = time.time()
+    readings = []
+
+    try:
+        while time.time() - start_time < duration:
+            data = reader.get_data()
+            if data is not None and len(data) == 4:
+                readings.append(data)
+            time.sleep(0.01)  # ~100 Hz sampling
+    finally:
+        reader.stop()
+
+    return np.array(readings)
+
+#%%
+
+def compute_thresholds(readings, PERCENTILE):
+    """
+    Compute a pressure threshold for each FSR sensor
+    based on the specified percentile of recorded data.
+    """
+    thresholds = np.percentile(readings, PERCENTILE, axis=0)
+    return thresholds
+
+#%%
+
+if __name__ == "__main__":
+    readings = record_fsr_data(duration=60)
+
+    thresholds = compute_thresholds(readings, PERCENTILE)
+    print("\nThresholds (90th percentile) for each FSR sensor:")
+    for i, th in enumerate(thresholds, start=1):
+        print(f"FSR {i}: {th:.2f}")
