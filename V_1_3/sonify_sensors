@@ -1,0 +1,119 @@
+import numpy as np
+import sounddevice as sd
+import time
+import threading
+from arduino_reader import ArduinoReader
+import step_pressure_percentile  # optional if you're using thresholds dynamically
+
+# === CONFIGURATION ===
+MAJOR_FREQS = [261.63, 329.63, 392.00, 493.88]  # C, E, G, B
+THRESHOLDS = [825, 860, 950, 800]  # Hardcoded; or compute from recorded baseline
+fs = 44100
+running = True
+
+# === STATE TRACKING ===
+active_tones = [False, False, False, False]
+tone_threads = [None, None, None, None]
+
+# ==========================================================
+#              SOUND GENERATION (SAFE STREAMING)
+# ==========================================================
+
+def play_continuous_tone(freq, index):
+    """
+    Play a continuous sine tone for a given frequency until
+    active_tones[index] becomes False. Uses a persistent
+    OutputStream (non-blocking) for stability.
+    """
+    global active_tones
+    duration = 0.05
+    phase = 0.0
+    omega = 2 * np.pi * freq / fs
+    buffer_size = int(fs * duration)
+
+    try:
+        with sd.OutputStream(samplerate=fs, channels=1) as stream:
+            while active_tones[index]:
+                t = np.arange(buffer_size)
+                wave = 0.3 * np.sin(omega * t + phase)
+                phase += omega * buffer_size
+                stream.write(wave.astype(np.float32))
+    except Exception as e:
+        print(f"[ERROR] Stream for tone {index} failed: {e}")
+        active_tones[index] = False
+
+
+def start_tone(index):
+    """Start continuous tone for a given sensor index."""
+    if not active_tones[index]:
+        active_tones[index] = True
+        thread = threading.Thread(
+            target=play_continuous_tone,
+            args=(MAJOR_FREQS[index], index),
+            daemon=True
+        )
+        tone_threads[index] = thread
+        thread.start()
+
+
+def stop_tone(index):
+    """Stop tone for sensor index."""
+    if active_tones[index]:
+        active_tones[index] = False
+
+
+# ==========================================================
+#                  MAIN SONIFICATION LOOP
+# ==========================================================
+
+def sonify(port='/dev/tty.BTM1', baud=9600, duration=30):
+    """
+    Continuously read sensor values from Arduino via Bluetooth
+    and play a tone for each sensor when its pressure exceeds
+    its threshold.
+    """
+    reader = ArduinoReader(port=port, baud=baud)
+    prev_pressed = [False, False, False, False]
+    start_time = time.time()
+
+    try:
+        while time.time() - start_time < duration:
+            data = reader.get_data()
+            if data is None:
+                continue
+
+            for i, value in enumerate(data):
+                pressed = value > THRESHOLDS[i]
+
+                # Rising edge: start tone
+                if pressed and not prev_pressed[i]:
+                    start_tone(i)
+
+                # Falling edge: stop tone
+                elif not pressed and prev_pressed[i]:
+                    stop_tone(i)
+
+                prev_pressed[i] = pressed
+
+            time.sleep(0.01)
+
+    except KeyboardInterrupt:
+        print("Stopping gracefully...")
+
+    finally:
+        reader.stop()
+        for i in range(4):
+            stop_tone(i)
+        time.sleep(0.5)  # let threads close streams
+        print("Sonification stopped.")
+
+
+# ==========================================================
+#                     ENTRY POINT
+# ==========================================================
+
+if __name__ == "__main__":
+    # Optional: record 5-step calibration
+    # readings = step_pressure_percentile.record_fsr_data(duration=20)
+    # THRESHOLDS = step_pressure_percentile.compute_thresholds(readings, step_pressure_percentile.PERCENTILE)
+    sonify()
