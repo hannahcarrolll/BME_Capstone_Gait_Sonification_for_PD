@@ -1,0 +1,46 @@
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+from arduino_reader import ArduinoReader
+
+def record_fsr_data(port='/dev/tty.BTM1', baud=9600, duration=20): #change duration for however long 5ish steps take
+    """
+    Record 4 FSR sensor readings over a fixed duration.
+    Returns timestamps and 4-column numpy array of readings.
+    """
+    reader = ArduinoReader(port=port, baud=baud)
+    start_time = time.time()
+
+    timestamps = []
+    readings = []
+
+    try:
+        while time.time() - start_time < duration:
+            data = reader.get_data()
+            if data is not None and len(data) == 4:
+                timestamps.append(time.time() - start_time)
+                readings.append(data)
+            time.sleep(0.01)  # 100 Hz sampling
+    finally:
+        reader.stop()
+
+    return np.array(timestamps), np.array(readings)
+
+def plot_fsr_data(timestamps, readings):
+    """
+    Plot the four FSR signals over time.
+    """
+    plt.figure(figsize=(10, 6))
+    for i in range(readings.shape[1]):
+        plt.plot(timestamps, readings[:, i], label=f"FSR {i+1}")
+    plt.title("FSR Sensor Readings Over Time (Approx. 5 Steps)")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Pressure (arbitrary units)")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+    timestamps, readings = record_fsr_data(duration=20)
+    plot_fsr_data(timestamps, readings)
