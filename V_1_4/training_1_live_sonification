@@ -1,0 +1,133 @@
+"""
+@author: hannahcarroll
+
+    This script will sonify a users gait live for DURATION amount of time. It will play a 
+different note in the C major chord for each sensor when the sensor acheives a preset threshold. 
+While this script is running, it will collect the pressure data over time, calculate and return
+an "average gait cycle", this being the gait period (avg heel to heel timing) and relative 
+timing offsets for each sensor to be used in the training module. 
+
+    The goal of this module is to 1. allow the patient to practice with what their "normal" gait 
+should sound like (allowing neurons to reconnect via audio motor coupling etc.) and 2. calculate
+and store a personalized "average gait cycle" to be used in the training module.
+"""
+import numpy as np
+import sounddevice as sd
+import time
+import threading
+import json
+from arduino_reader import ArduinoReader  # must read 4 FSR sensor values via serial
+
+### CONFIGURATION 
+FS = 44100  # sample rate
+FREQS = [261.63, 329.63, 392.00, 493.88]  # C, E, G, B
+THRESHOLDS = [825, 860, 950, 800]  # FSR thresholds for gait events
+DURATION = 180  # duration of recording in seconds
+OUTPUT_FILE = "average_gait_cycle.json"
+
+### GLOBAL STATE 
+active_tones = [False] * 4
+tone_threads = [None] * 4
+gait_events = []
+
+### Sound Playback 
+
+def generate_tone(freq, duration, fs=FS):
+    """Generate a sine wave."""
+    t = np.linspace(0, duration, int(duration * fs), endpoint=False)
+    return 0.3 * np.sin(2 * np.pi * freq * t).astype(np.float32)
+
+def play_tone(freq, index):
+    """Continuously play a tone until stopped."""
+    global active_tones
+    buffer_duration = 0.05
+    buffer_size = int(buffer_duration * FS)
+    phase = 0.0
+    omega = 2 * np.pi * freq / FS
+    
+    try:
+        with sd.OutputStream(samplerate=FS, channels=1) as stream:
+            while active_tones[index]:
+                t = np.arange(buffer_size)
+                wave = 0.3 * np.sin(omega * t + phase).astype(np.float32)
+                phase += omega * buffer_size
+                stream.write(wave)
+    except Exception as e:
+        print(f"[ERROR] Tone stream {index} failed: {e}")
+
+def start_tone(index):
+    """Start a tone if not already playing."""
+    if not active_tones[index]:
+        active_tones[index] = True
+        thread = threading.Thread(target=play_tone, args=(FREQS[index], index), daemon=True)
+        tone_threads[index] = thread
+        thread.start()
+
+def stop_tone(index):
+    active_tones[index] = False
+
+### Gait Cycle Extraction
+
+def extract_average_gait_cycle(events):
+    """Compute average gait period and timing offsets for all 4 sensors."""
+    heel_strikes = [t for sensor, e_type, t in events if sensor == "sensor0" and e_type == "ON"]
+    if len(heel_strikes) < 6:
+        raise ValueError("Insufficient heel strikes to compute cycle")
+
+    heel_strikes = heel_strikes[2:-2]  # Remove first 2 and last 2
+    period = np.mean(np.diff(heel_strikes))  # average heel-to-heel time
+
+    offsets = {i: [] for i in range(1, 4)}  # relative timing of toe/mid-foot sensors
+    for heel_time in heel_strikes:
+        for i in range(1, 4):
+            strike_time = next(
+                (t for sensor, e_type, t in events if sensor == f"sensor{i}" and e_type == "ON" and t > heel_time),
+                None
+            )
+            if strike_time:
+                offsets[i].append(strike_time - heel_time)
+
+    avg_offsets = {i: np.mean(times) if times else (period * 0.4) for i, times in offsets.items()}
+    return period, avg_offsets
+
+### Main Recording
+
+def gait_sonify_and_record(port='/dev/cu.usbserial-110', baud=9600):
+    reader = ArduinoReader(port=port, baud=baud)
+    start_time = time.time()
+
+    try:
+        while time.time() - start_time < DURATION:
+            data = reader.get_data()
+
+            if data is None:
+                continue
+
+            timestamp = time.time() - start_time
+            
+            # Handle tones and log events
+            for i, value in enumerate(data):
+                pressed = value > THRESHOLDS[i]
+                event_type = "ON" if pressed else "OFF"
+                gait_events.append((f"sensor{i}", event_type, timestamp))
+                
+                if pressed:
+                    start_tone(i)
+                else:
+                    stop_tone(i)
+
+            time.sleep(0.01)
+
+    finally:
+        reader.stop()
+        for i in range(4):
+            stop_tone(i)
+
+        period, offsets = extract_average_gait_cycle(gait_events)
+        result = {"period": period, "offsets": offsets}
+        with open(OUTPUT_FILE, 'w') as f:
+            json.dump(result, f, indent=2)
+
+# Run script
+if __name__ == "__main__":
+    gait_sonify_and_record()
