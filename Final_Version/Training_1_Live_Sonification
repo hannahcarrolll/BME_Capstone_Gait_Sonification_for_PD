@@ -1,0 +1,160 @@
+import serial
+import time
+import numpy as np
+import json
+import threading
+import sounddevice as sd
+from arduino_reader import ArduinoReader
+
+FS = 44100
+FREQS = [261.63, 329.63, 392.00, 493.88]  # C E G B
+THRESHOLDS = [950, 950, 950, 950] # Calibrate using step_pressure_percentile
+DURATION = 20
+OUTPUT_FILE = "average_gait_cycle.json"
+
+active_tones = [False] * 4
+tone_threads = [None] * 4
+
+###  SOUND PLAYBACK (LIVE)
+def play_tone(freq, index):
+    buffer_duration = 0.05
+    buffer_size = int(buffer_duration * FS)
+    phase = 0.0
+    omega = 2 * np.pi * freq / FS
+
+    try:
+        with sd.OutputStream(samplerate=FS, channels=1) as stream:
+            while active_tones[index]:
+                t = np.arange(buffer_size)
+                wave = 0.3 * np.sin(omega * t + phase).astype(np.float32)
+                phase += omega * buffer_size
+                stream.write(wave)
+    except Exception as e:
+        print(f"[ERROR tone {index}]: {e}")
+
+
+def start_tone(index):
+    if not active_tones[index]:
+        active_tones[index] = True
+        thread = threading.Thread(target=play_tone,
+                                  args=(FREQS[index], index),
+                                  daemon=True)
+        tone_threads[index] = thread
+        thread.start()
+
+
+def stop_tone(index):
+    active_tones[index] = False
+
+###  AVERAGE FOOTSTEP
+def extract_gait_averages(data, timestamps, thresholds):
+    prev_on = [False, False, False, False]
+    steps = []
+
+    current_step = {
+        "heel_on": None,
+        "mid_on": None,
+        "ball_on": None,
+        "toe_on": None,
+        "toe_off": None
+    }
+
+    for fsr, t in zip(data, timestamps):
+        on = [fsr[j] > thresholds[j] for j in range(4)]
+        rising = [(not prev_on[j]) and on[j] for j in range(4)]
+        falling = [prev_on[j] and (not on[j]) for j in range(4)]
+
+        # Heel ON
+        if rising[0]:
+            if current_step["heel_on"] is not None:
+                current_step["next_heel_on"] = t
+                steps.append(current_step)
+                current_step = {
+                    "heel_on": None,
+                    "mid_on": None,
+                    "ball_on": None,
+                    "toe_on": None,
+                    "toe_off": None
+                }
+            current_step["heel_on"] = t
+
+        if rising[1] and current_step["heel_on"] is not None and current_step["mid_on"] is None:
+            current_step["mid_on"] = t
+
+        if rising[2] and current_step["heel_on"] is not None and current_step["ball_on"] is None:
+            current_step["ball_on"] = t
+
+        if rising[3] and current_step["heel_on"] is not None and current_step["toe_on"] is None:
+            current_step["toe_on"] = t
+
+        if falling[3] and current_step["heel_on"] is not None and current_step["toe_off"] is None:
+            current_step["toe_off"] = t
+
+        prev_on = on
+
+    if len(steps) == 0:
+        return None
+
+    rel = []
+    for st in steps:
+        heel = st["heel_on"]
+        rel.append({
+            "mid_on":       (st["mid_on"]       - heel) if st["mid_on"] else None,
+            "ball_on":      (st["ball_on"]      - heel) if st["ball_on"] else None,
+            "toe_on":       (st["toe_on"]       - heel) if st["toe_on"] else None,
+            "toe_off":      (st["toe_off"]      - heel) if st["toe_off"] else None,
+            "next_heel_on": (st["next_heel_on"] - heel) if st.get("next_heel_on") else None
+        })
+
+    def avg(field):
+        vals = [s[field] for s in rel if s[field] is not None]
+        return sum(vals) / len(vals) if len(vals) else None
+
+    return {
+        "T_mid_on": avg("mid_on"),
+        "T_ball_on": avg("ball_on"),
+        "T_toe_on": avg("toe_on"),
+        "T_toe_off": avg("toe_off"),
+        "T_step_cycle": avg("next_heel_on")
+    }
+
+###  RECORDING + SAVE AVERAGE CYCLE
+def gait_record_and_average(port='/dev/cu.usbserial-10', baud=9600):
+    reader = ArduinoReader(port=port, baud=baud)
+    data = []
+    timestamps = []
+    start = time.time()
+
+    try:
+        while time.time() - start < DURATION:
+            fsr = reader.get_data()
+            if fsr is None:
+                continue
+            t = time.time() - start
+
+            data.append(fsr)
+            timestamps.append(t)
+
+            # live sonification
+            for i in range(4):
+                if fsr[i] > THRESHOLDS[i]:
+                    start_tone(i)
+                else:
+                    stop_tone(i)
+
+            time.sleep(0.01)
+
+    finally:
+        reader.stop()
+        for i in range(4):
+            stop_tone(i)
+
+    avg = extract_gait_averages(data, timestamps, THRESHOLDS)
+    print("\nAveraged Gait Cycle:", avg)
+
+    with open(OUTPUT_FILE, "w") as f:
+        json.dump(avg, f, indent=2)
+
+
+if __name__ == "__main__":
+    gait_record_and_average()
