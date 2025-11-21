@@ -1,0 +1,98 @@
+import numpy as np
+import sounddevice as sd
+import time
+import json
+from arduino_reader import ArduinoReader
+
+FS = 44100
+THRESHOLDS = [950, 950, 950, 950]
+FREQS = [261.63, 329.63, 392.00, 493.88]  # C E G B
+GAIT_CYCLE_FILE = "average_gait_cycle.json"
+
+#  GAIT CYCLE AUDIO LOOP
+def build_gait_loop(avg):
+    Tmid  = avg["T_mid_on"]
+    Tball = avg["T_ball_on"]
+    Ttoe  = avg["T_toe_on"]
+    Toff  = avg["T_toe_off"]
+    Tstep = avg["T_step_cycle"]
+
+    # durations
+    dC   = Tmid - 0
+    dE   = Tball - Tmid
+    dG   = Ttoe - Tball
+    dB   = Toff - Ttoe
+    dSil = Tstep - Toff
+
+    audio = np.array([], dtype=np.float32)
+
+    def tone(freq, dur):
+        if dur <= 0:
+            return np.zeros(1, dtype=np.float32)
+        t = np.linspace(0, dur, int(dur * FS), endpoint=False)
+        return 0.3 * np.sin(2 * np.pi * freq * t).astype(np.float32)
+
+    audio = np.concatenate([
+        tone(FREQS[0], dC),   # C
+        tone(FREQS[1], dE),   # E
+        tone(FREQS[2], dG),   # G
+        tone(FREQS[3], dB),   # B
+        tone(0,         dSil) # silence
+    ])
+
+    return audio
+
+#  STUTTER & RETURN TO NORMAL DETECTION
+def detect_stutter(fsr):
+    detect_stutter.state = getattr(detect_stutter, "state", 0)
+    heel = fsr[0] > THRESHOLDS[0]
+    toe  = fsr[3] > THRESHOLDS[3]
+
+    if detect_stutter.state == 0 and toe and not heel:
+        detect_stutter.state = 1
+    elif detect_stutter.state == 1 and not toe:
+        detect_stutter.state = 2
+    elif detect_stutter.state == 2 and toe and not heel:
+        detect_stutter.state = 0
+        return True
+    elif heel:
+        detect_stutter.state = 0
+
+    return False
+
+def detect_heelstrike(fsr):
+    return fsr[0] > THRESHOLDS[0]
+
+###  MONITOR GAIT + PLAY LOOP ON STUTTER
+def gait_stutter_monitor(port='/dev/cu.usbserial-10', baud=9600):
+
+    with open(GAIT_CYCLE_FILE, "r") as f:
+        avg = json.load(f)
+
+    loop_audio = build_gait_loop(avg)
+
+    reader = ArduinoReader(port=port, baud=baud)
+    playing = False
+
+    try:
+        while True:
+            fsr = reader.get_data()
+            if fsr is None:
+                continue
+
+            if not playing and detect_stutter(fsr):
+                sd.play(loop_audio, FS, loop=True)
+                playing = True
+
+            if playing and detect_heelstrike(fsr):
+                sd.stop()
+                playing = False
+
+            time.sleep(0.01)
+
+    finally:
+        reader.stop()
+        sd.stop()
+
+if __name__ == "__main__":
+    gait_stutter_monitor()
